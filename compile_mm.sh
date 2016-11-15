@@ -11,7 +11,7 @@ avr-gcc -Os -DDEBUG_LEVEL=0  -o libs-device/osccal.o -Iusbdrv -Ilibs-device -I. 
 echo "Usbdrvasm"
 avr-gcc -Os -Wall -x assembler-with-cpp -o usbdrv/usbdrvasm.o -Ilibs-device -I. -mmcu=attiny85 -DF_CPU=16500000  -c usbdrv/usbdrvasm.S
 echo "Full"
-avr-gcc -Os -Wall -o pomodocube.elf -I. -mmcu=attiny85 -DF_CPU=16500000  pomodocube.o usbdrv/usbdrvasm.o usbdrv/oddebug.o usbdrv/usbdrv.o light_ws2812.o #libs-device/osccal.o 
+avr-gcc -Os -Wall -o pomodocube.elf -I. -mmcu=attiny85 -DF_CPU=16500000  pomodocube.o usbdrv/usbdrvasm.o usbdrv/oddebug.o usbdrv/usbdrv.o light_ws2812.o libs-device/osccal.o 
 
 avr-size pomodocube.elf
 avr-objcopy -j .text  -j .data -O ihex pomodocube.elf pomodocube.hex

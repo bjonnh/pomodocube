@@ -12,40 +12,147 @@
 #include "requests.h"
 #include <avr/wdt.h>
 #include "oddebug.h"
+#include "osccal.h"
+//#define sei() asm volatile("sei")
+//#define cli() asm volatile("cli")
+//#define nop() asm volatile("nop")
 
 #define MAXPIX 8
 
-struct cRGB colors[8];
 struct cRGB led[MAXPIX];
+
+
+uint8_t update=0;
+#define BUFLEN 8
+uchar param[BUFLEN];
+
+#define UPDATEDELAY 64
+
+static uchar    currentAddress;
+static uchar    bytesRemaining;
+
+// Commands
+// 0 . . . . . . . : Reset to black
+// 1 r g b . . . . : Set all to color r g b
+// 2 r g b l . . . : Set led l to color r g b
+
+void react(void) {
+	uint8_t i;
+
+	switch (param[0]) {
+	case 0: // Set off all
+		for(i=MAXPIX; i>0; i--)
+		{    
+			led[i-1].r=0;led[i-1].g=0;led[i-1].b=0;
+		}
+		
+		update=UPDATEDELAY;
+
+		break;
+	case 1: // Full color
+		for(i=MAXPIX; i>0; i--)
+		{    
+			led[i-1].r=param[1];led[i-1].g=param[2];led[i-1].b=param[3];
+		}
+
+		update=UPDATEDELAY;
+		break;
+	case 2: // Set
+		led[param[4]%8].r=param[1];led[param[4]%8].g=param[2];led[param[4]%8].b=param[3];
+
+		update=UPDATEDELAY;
+		break;
+	}
+
+}
+
+// Function
+// 1: led on (single), params: r,g,b
+void setup(void)
+{
+       
+//	DDRB|=_BV(ws2812_pin);
+		
+	uint8_t i;
+	for(i=MAXPIX; i>0; i--)
+	{    
+	    led[i-1].r=0;led[i-1].g=0;led[i-1].b=0;
+	}
+	update=255;
+}
+
+
+PROGMEM const char usbHidReportDescriptor[22] = {    /* USB report descriptor */
+    0x06, 0x00, 0xff,              // USAGE_PAGE (Generic Desktop)
+    0x09, 0x01,                    // USAGE (Vendor Usage 1)
+    0xa1, 0x01,                    // COLLECTION (Application)
+    0x15, 0x00,                    //   LOGICAL_MINIMUM (0)
+    0x26, 0xff, 0x00,              //   LOGICAL_MAXIMUM (255)
+    0x75, 0x08,                    //   REPORT_SIZE (8)
+    0x95, 0x08,                    //   REPORT_COUNT (128)
+    0x09, 0x00,                    //   USAGE (Undefined)
+    0xb2, 0x02, 0x01,              //   FEATURE (Data,Var,Abs,Buf)
+    0xc0                           // END_COLLECTION
+};
+uchar   usbFunctionRead(uchar *data, uchar len)
+{
+	if (len > bytesRemaining)
+		len = bytesRemaining;
+	for (int i=0; i<len; i++) {
+		data[i] = param[i];
+	}
+	currentAddress += len;
+	bytesRemaining -= len;
+	return len;
+}
+
+uchar   usbFunctionWrite(uchar *data, uchar len)
+{
+	memcpy(param, data, len);
+//	param[0] = data[0];
+	react();
+/*	for (i=0;i<len;i++) {
+		if (bufpos<BUFLEN) {
+			param[bufpos] = data[i];
+			bufpos++;
+		}
+	}
+	if (bufpos==BUFLEN) {
+		react();
+		bufpos=0;
+	}
+*/
+	return 1;
+}
+
 
 usbMsgLen_t usbFunctionSetup(uchar data[8])
 {
-usbRequest_t    *rq = (void *)data;
-static uchar    dataBuffer[4];  /* buffer must stay valid when usbFunctionSetup returns */
+	usbRequest_t    *rq = (void *)data;
 
-    if(rq->bRequest == CUSTOM_RQ_ECHO){ /* echo -- used for reliability tests */
-        dataBuffer[0] = rq->wValue.bytes[0];
-        dataBuffer[1] = rq->wValue.bytes[1];
-        dataBuffer[2] = rq->wIndex.bytes[0];
-        dataBuffer[3] = rq->wIndex.bytes[1];
-        usbMsgPtr = dataBuffer;         /* tell the driver which data to return */
-        return 4;
-    }else if(rq->bRequest == CUSTOM_RQ_SET_STATUS){
-        if(rq->wValue.bytes[0] & 1){    /* set LED */
-	  //LED_PORT_OUTPUT |= _BV(LED_BIT);
-        }else{                          /* clear LED */
-	  //LED_PORT_OUTPUT &= ~_BV(LED_BIT);
+    if((rq->bmRequestType & USBRQ_TYPE_MASK) == USBRQ_TYPE_CLASS){    /* HID class request */
+        if(rq->bRequest == USBRQ_HID_GET_REPORT){  /* wValue: ReportType (highbyte), ReportID (lowbyte) */
+            /* since we have only one report type, we can ignore the report-ID */
+            bytesRemaining = 128;
+          currentAddress = 0;
+
+            return USB_NO_MSG;  /* use usbFunctionRead() to obtain data */
+        }else if(rq->bRequest == USBRQ_HID_SET_REPORT){
+            /* since we have only one report type, we can ignore the report-ID */
+            bytesRemaining = 128;
+		          currentAddress = 0;
+            return USB_NO_MSG;  /* use usbFunctionWrite() to receive data from host */
         }
-    }else if(rq->bRequest == CUSTOM_RQ_GET_STATUS){
-      dataBuffer[0] = 42; //((LED_PORT_OUTPUT & _BV(LED_BIT)) != 0);
-        usbMsgPtr = dataBuffer;         /* tell the driver which data to return */
-        return 1;                       /* tell the driver to send 1 byte */
+    }else{
+        /* ignore vendor type requests, we don't use any */
     }
-    return 0;   /* default for not implemented requests: return no data back to host */
+    return 0;
+
 }
 
 int __attribute__((noreturn)) main(void)
 {
+	
 uchar   i;
  setup();
      wdt_enable(WDTO_1S);
@@ -56,11 +163,9 @@ uchar   i;
      * That's the way we need D+ and D-. Therefore we don't need any
      * additional hardware initialization.
      */
-    odDebugInit();
-    DBG1(0x00, 0, 0);       /* debug output: main starts */
     usbInit();
     usbDeviceDisconnect();  /* enforce re-enumeration, do this while interrupts are disabled! */
-        i = 0;
+        i = 250;
     while(--i){             /* fake USB disconnect for > 250 ms */
           wdt_reset();
         _delay_ms(1);
@@ -68,60 +173,24 @@ uchar   i;
     usbDeviceConnect();
     //LED_PORT_DDR |= _BV(LED_BIT);   /* make the LED bit an output */
     sei();
-    DBG1(0x01, 0, 0);       /* debug output: main loop starts */
+
     for(;;){                /* main event loop */
-        DBG1(0x02, 0, 0);   /* debug output: main loop iterates */
-		        wdt_reset();
-        usbPoll();
-					loop();
+	wdt_reset();
+
+	usbPoll();
+	if (update == 1)
+	{
+		// Let's wait a bit
+		ws2812_sendarray((uint8_t *)led,MAXPIX*3);
+		update = 0;
+	}
+
+	if (update >1) {
+		update--;
+	}
+
+	//loop();
+
     }
 }
 
-
-	uint8_t j = 1;
-	uint8_t k = 1;
-
-int setup(void)
-{
-	
-
-	DDRB|=_BV(ws2812_pin);
-		
-    uint8_t i;
-    for(i=MAXPIX; i>0; i--)
-    {    
-        led[i-1].r=0;led[i-1].g=0;led[i-1].b=0;
-    }
-		
-    //Rainbowcolors
-    colors[0].r=150; colors[0].g=150; colors[0].b=150;
-    colors[1].r=255; colors[1].g=000; colors[1].b=000;//red
-    colors[2].r=255; colors[2].g=100; colors[2].b=000;//orange
-    colors[3].r=100; colors[3].g=255; colors[3].b=000;//yellow
-    colors[4].r=000; colors[4].g=255; colors[4].b=000;//green
-    colors[5].r=000; colors[5].g=100; colors[5].b=255;//light blue (türkis)
-    colors[6].r=000; colors[6].g=000; colors[6].b=255;//blue
-    colors[7].r=100; colors[7].g=000; colors[7].b=255;//violet
-}
-#define LOOPS 640
-uint16_t loopy=0;
-uint8_t col=0;
-int loop(void)
-{
-  if (loopy<LOOPS) {
-    loopy++;
-  } else {
-    loopy=0;
-    for (uint8_t i=MAXPIX;i>0;i--)
-      {
-	led[i-1].r=colors[(i%8+col)-1].r;
-	led[i-1].g=colors[(i%8+col)-1].g;
-	led[i-1].b=colors[(i%8+col)-1].b;
-
-      }
-    if(col<7) {col++;} else {col=0;}
- ws2812_sendarray((uint8_t *)led,MAXPIX*3);
-				 //		 sei();
-				 //wdt_reset();
-  }  
-}
