@@ -11,7 +11,7 @@
 #include "usbdrv.h"
 #include "requests.h"
 #include <avr/wdt.h>
-#include "oddebug.h"
+#include <string.h>
 #include "osccal.h"
 //#define sei() asm volatile("sei")
 //#define cli() asm volatile("cli")
@@ -150,12 +150,12 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 
 }
 
-int __attribute__((noreturn)) main(void)
+int main(void)
 {
 	
-uchar   i;
- setup();
-     wdt_enable(WDTO_1S);
+	uchar   i;
+	setup();
+	wdt_enable(WDTO_1S);
     /* Even if you don't use the watchdog, turn it off here. On newer devices,
      * the status of the watchdog (on/off, period) is PRESERVED OVER RESET!
      */
