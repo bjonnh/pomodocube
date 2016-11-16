@@ -1,6 +1,6 @@
 /*
  *
- * This example is configured for an Atmega85 at 16.5MHz
+ * This is configured for an Atmega85 at 16.5MHz
  */ 
 
 #include <util/delay.h>
@@ -197,13 +197,13 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
   if((rq->bmRequestType & USBRQ_TYPE_MASK) == USBRQ_TYPE_CLASS){    /* HID class request */
     if(rq->bRequest == USBRQ_HID_GET_REPORT){  /* wValue: ReportType (highbyte), ReportID (lowbyte) */
       /* since we have only one report type, we can ignore the report-ID */
-      bytesRemaining = 128;
+      bytesRemaining = 8;
       currentAddress = 0;
 
       return USB_NO_MSG;  /* use usbFunctionRead() to obtain data */
     }else if(rq->bRequest == USBRQ_HID_SET_REPORT){
       /* since we have only one report type, we can ignore the report-ID */
-      bytesRemaining = 128;
+      bytesRemaining = 8;
       currentAddress = 0;
       return USB_NO_MSG;  /* use usbFunctionWrite() to receive data from host */
     }
@@ -249,4 +249,3 @@ void __attribute__ ((noreturn)) main()
       }
   }
 }
-
