@@ -5,8 +5,8 @@ FLASH=./micronucleus
 # If you don't use micronucleus
 # FLASH=avrdude -c usbasp -p$(DEVICE)
 
-
-OPTFLAGS = -Os -flto
+#OPTFLAGS = -Os
+OPTFLAGS = -O3 -flto -funsigned-char -funsigned-bitfields -fpack-struct -fshort-enums -finline-limit=3 -fno-inline-small-functions -ffunction-sections -fdata-sections -ffreestanding -Wl,--relax -mcall-prologues -fno-tree-scev-cprop -fno-split-wide-types
 INCLUDES =  -Iv-usb/libs-device -I. -Iv-usb/usbdrv -DDEBUG_LEVEL=0
 CFLAGS = $(OPTFLAGS) -Wall $(INCLUDES) -mmcu=$(DEVICE) -DF_CPU=$(F_CPU)
 OBJECTS = main.o light_ws2812.o v-usb/usbdrv/usbdrv.o v-usb/usbdrv/oddebug.o v-usb/libs-device/osccal.o  v-usb/usbdrv/usbdrvasm.o

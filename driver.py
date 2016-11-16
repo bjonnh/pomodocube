@@ -87,12 +87,13 @@ def sine_blend_glitch():
 def randomize_tint(color):
     return int(color + random.randint(-5,5))%50
         
-def northern_lights():
+def northern_lights(brightness=50):
     angle=0
     color=[]
     color_fade=[]
+    device.write([0xf0,brightness,0x00,0x00,0,0,0,0,0])
     for led in range(0,8):
-        basic_tint = random.randint(0,50)
+        basic_tint = random.randint(0,brightness)
         col = [basic_tint,
                       randomize_tint(basic_tint),
                       randomize_tint(basic_tint)]
@@ -101,7 +102,7 @@ def northern_lights():
     while True:
         if random.random()>0.99:
             for j in range(0,8):
-                color[j] = [int(c + random.randint(-5,5))%50 for c in color[j]]
+                color[j] = [int(c + random.randint(-5,5))%brightness for c in color[j]]
         for i in range(0,8):
             ri = i#int(350*(1+math.sin(angle/1)))%8
             old_fade = color_fade[ri]
@@ -109,8 +110,11 @@ def northern_lights():
             color_fade[i] = [int((old_fade[k] + color_fade[i][k]/10)/1.1) for k in range(0,3)]
 
             device.write([0x02]+ color_fade[i] + [ri] + [ 0, 0 ,0]);
-            time.sleep(0.005);
-        angle += math.pi/36
+            time.sleep(0.001);
+        angle += math.pi/18#36
 
         
-northern_lights()
+northern_lights(150)
+
+#device.write([0x04,0x01,0x01,0,0,0,0,0])
+
