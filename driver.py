@@ -208,13 +208,36 @@ class SpectrumAnalyzer:
         print("{:03} {:03} {:03}".format(bass,medium,treble))
         device.write([0x02,bass%255,medium%255,treble%255,
                       self.led,0,0,0])
+
+def gradient_fire():
+    bass=0
+    medium=0
+    treble=0
+    starttime=time.time()
+    while True:
+        for i in range(0,8):
+            device.write([0x02,bass,medium,treble,
+                          i])
+            if bass < 255:
+                bass +=1
+            elif medium < 255:
+                medium += 1
+            elif treble < 255:
+                treble +=1
+            else:
+                bass = 0
+                medium = 0
+                treble = 0
+                t = (time.time()-starttime)
+                starttime = time.time()
+                print("FPS: {}".format(3*255/t))
               #print()
 #rotary_blend()        
 #sine_blend()
 #northern_lights(255)
 fft=SpectrumAnalyzer()
-
-# fire(255, 32) fire is dirty and buggy don't use it
+#gradient_fire()
+#fire(255, 32) fire is dirty and buggy don't use it
 
 #device.write([0x04,0x01,0x01,0,0,0,0,0])
 
