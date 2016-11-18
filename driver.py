@@ -3,17 +3,15 @@ import time
 import random
 import math
 import pyaudio
+import sys
+import os
 import numpy as np
+from select import select
+import threading
+from zmq.eventloop.ioloop import IOLoop
 
-while True:
-    try:
-        device = hid.device()
-        device.open(0x16c0, 0x05df)
-        break
-    except OSError:
-        pass
+import zmq
 
-print("Opened")
 
 def rotary():
     while True:
@@ -88,32 +86,6 @@ def sine_blend_glitch():
 def randomize_tint(color):
     return int(color + random.randint(-5,5))%50
         
-def northern_lights(brightness=50):
-    angle=0
-    color=[]
-    color_fade=[]
-    device.write([0xf0,brightness,0x00,0x00,0,0,0,0,0])
-    for led in range(0,8):
-        basic_tint = random.randint(0,brightness)
-        col = [basic_tint,
-                      randomize_tint(basic_tint),
-                      randomize_tint(basic_tint)]
-        color.append(col)
-        color_fade.append(col)
-    while True:
-        if random.random()>0.99:
-            for j in range(0,8):
-                color[j] = [int(c + random.randint(-5,5))%brightness for c in color[j]]
-        for i in range(0,8):
-            ri = i#int(350*(1+math.sin(angle/1)))%8
-            old_fade = color_fade[ri]
-            color_fade[i] = [int((1+math.sin(angle*((i+2)/7.0)))*c/2) for c in color[i]]
-            color_fade[i] = [int((old_fade[k] + color_fade[i][k]/10)/1.1) for k in range(0,3)]
-
-            device.write([0x02]+ color_fade[i] + [ri] + [ 0, 0 ,0]);
-            time.sleep(0.001);
-        angle += math.pi/18#36
-
 
 def fire(brightness=50, force=255):
     angle=0
@@ -209,35 +181,202 @@ class SpectrumAnalyzer:
         device.write([0x02,bass%255,medium%255,treble%255,
                       self.led,0,0,0])
 
-def gradient_fire():
-    bass=0
-    medium=0
-    treble=0
-    starttime=time.time()
-    while True:
-        for i in range(0,8):
-            device.write([0x02,bass,medium,treble,
-                          i])
-            if bass < 255:
-                bass +=1
-            elif medium < 255:
-                medium += 1
-            elif treble < 255:
-                treble +=1
-            else:
-                bass = 0
-                medium = 0
-                treble = 0
-                t = (time.time()-starttime)
-                starttime = time.time()
-                print("FPS: {}".format(3*255/t))
-              #print()
-#rotary_blend()        
-#sine_blend()
-#northern_lights(255)
-fft=SpectrumAnalyzer()
-#gradient_fire()
-#fire(255, 32) fire is dirty and buggy don't use it
 
-#device.write([0x04,0x01,0x01,0,0,0,0,0])
+class NorthernLights:
+    def __init__(self, device):
+        self.brightness = 50
+        self.speed = 1/18.0
+        self.angle = 0
+        self.color = []
+        self.color_fade = []
+        self.device = device
+
+        for led in range(0, 8):
+            basic_tint = random.randint(0, self.brightness)
+            col = [basic_tint,
+                   randomize_tint(basic_tint),
+                   randomize_tint(basic_tint)]
+            self.color.append(col)
+            self.color_fade.append(col)
+
+    def modify_colors(self):
+        for j in range(0, 8):
+            self.color[j] = [int(c + random.randint(-5, 5)) %
+                             self.brightness for c in self.color[j]]
+
+    def loop(self):
+        if random.random() > 0.99:
+            self.modify_colors()
+
+        for i in range(0, 8):
+            ri = i
+            old_fade = self.color_fade[ri]
+            self.color_fade[i] = [int((1+math.sin(self.angle*((i+2)/7.0)))*c/2)
+                                  for c in self.color[i]]
+            self.color_fade[i] = [
+                int((old_fade[k] + self.color_fade[i][k]/10) / 1.1)
+                for k in range(0, 3)]
+            device.set_led_color_to(*self.color_fade[i], ri)
+
+        self.angle += math.pi * self.speed
+
+    def excite(self):
+        self.speed = min(1/9.0, self.speed * 1.10)
+        self.brightness = min(self.brightness+11, 255)
+        self.modify_colors()
+        print("Speed: {} - Brightness: {}".format(self.speed, self.brightness))
+
+    def calm(self):
+        self.speed = max(1/64, self.speed / 1.10)
+        self.brightness = max(self.brightness-11, 50)
+        self.modify_colors()
+        print("Speed: {} - Brightness: {}".format(self.speed, self.brightness))
+
+
+class Alarm:
+    def __init__(self, device):
+        self.brightness = 255
+        self.angle = 0
+        self.color = []
+        self.color_fade = []
+        self.device = device
+
+        for led in range(0, 8):
+            col = [255,
+                   64,
+                   0]
+            self.color.append(col)
+            self.color_fade.append(col)
+
+    def loop(self):
+        for i in range(0, 8):
+            ri = i
+            old_fade = self.color_fade[ri]
+            self.color_fade[i] = [int((1+math.sin(self.angle*((i+2)/7.0)))*c/2)
+                                  for c in self.color[i]]
+            self.color_fade[i] = [
+                int((old_fade[k] + self.color_fade[i][k]/10) / 1.1)
+                for k in range(0, 3)]
+            device.set_led_color_to(*self.color_fade[i], ri)
+
+        self.angle += math.pi/18
+
+
+class Device:
+    TRIES = 3
+    COLOR_PRESETS = 8
+
+    def __init__(self, leds=8):
+        tries = self.TRIES
+        self.leds = leds
+
+        while tries > 0:
+            try:
+                self.device = hid.device()
+                self.device.open(0x16c0, 0x05df)
+                break
+            except OSError:
+                time.sleep(0.5)
+                self.tries -= 1
+                if self.tries == 0:
+                    print("Sorry couldn't connect")
+                    sys.exit()
+                pass
+
+    def set_to_black(self):
+        self.device.write([0x0])
+
+    def set_colors_to(self, r, g, b):
+        self.device.write([0x01, r % 256, g % 256, b % 256])
+
+    def set_led_color_to(self, r, g, b, led):
+        self.device.write([0x02, r % 256, g % 256, b % 256, led % self.leds])
+
+    def set_colors_to_preset(self, color_preset):
+        self.device.write([0x03, color_preset % self.COLOR_PRESETS])
+
+    def set_led_color_to_preset(self, color_preset, led):
+        self.device.write([0x04, color_preset % self.COLOR_PRESETS,
+                           led % self.leds])
+
+    def set_brightness(self, brightness):
+        self.device.write([0xf0, brightness % 256])
+
+
+class EventLoop:
+
+    def __init__(self, device):
+        self.device = device
+        self.northern_lights = NorthernLights(self.device)
+        self.alarm = Alarm(self.device)
+        self.mode = "northern_lights"
+        self.resettime = None
+        self.commands = []
+
+    def runcommand(self, command):
+        if str(command) == 'alarm':
+            print("Alarm mode")
+            self.resettime = time.time()+5
+            self.mode = "alarm"
+        if str(command) == 'excite':
+            self.northern_lights.excite()
+        if str(command) == 'excited':
+            for i in range(0, 25):
+                self.northern_lights.excite()
+        if str(command) == 'calm':
+            self.northern_lights.calm()
+        if str(command) == 'calmed':
+            for i in range(0, 25):
+                self.northern_lights.calm()
+        if str(command) == 'high':
+            self.device.set_brightness(255)
+        if str(command) == 'medium':
+            self.device.set_brightness(127)
+        if str(command) == 'low':
+            self.device.set_brightness(50)
+
+    def loop(self):
+        if self.resettime and time.time() > self.resettime:
+            print("Normal mode")
+            self.mode = "northern_lights"
+            self.resettime = None
+
+        if self.mode == "northern_lights":
+            self.northern_lights.loop()
+        if self.mode == "alarm":
+            self.alarm.loop()
+
+        time.sleep(0.05)
+
+
+device = Device()
+eventloop = EventLoop(device)
+
+
+class LedWorker(threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+
+    def run(self):
+        while True:
+            eventloop.loop()
+
+
+class MessageWorker(threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+
+    def run(self):
+        context = zmq.Context()
+        socket = context.socket(zmq.REP)
+        socket.bind("tcp://127.0.0.1:5555")
+        while True:
+            msg = socket.recv(copy=False)
+            socket.send(msg)
+            eventloop.runcommand(msg)
+
+lw = LedWorker()
+mw = MessageWorker()
+lw.start()
+mw.start()
 
